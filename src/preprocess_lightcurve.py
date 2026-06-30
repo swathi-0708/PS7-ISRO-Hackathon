@@ -1,120 +1,80 @@
-from astropy.io import fits
+import argparse
+from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
-from pathlib import Path
-from wotan import flatten
+from config import STAR_CONFIG
+from pipeline import load_fits, clean_and_normalize, detrend
 
-# ----------------------------------------------------
-# Path to the FITS file
-# ----------------------------------------------------
+def main():
+    parser = argparse.ArgumentParser(description="Preprocess light curve for a star.")
+    parser.add_argument("--star", type=str, default="TIC_25155310", help="Star name to process")
+    args = parser.parse_args()
 
-fits_path = Path(
-    "data/raw/sector_1/"
-    "tess2018206045859-s0001-0000000025155310-0120-s/"
-    "tess2018206045859-s0001-0000000025155310-0120-s_lc.fits"
-)
+    star_name = args.star
+    if star_name not in STAR_CONFIG:
+        print(f"Error: Star '{star_name}' not found in STAR_CONFIG.")
+        return
 
-# ----------------------------------------------------
-# Read the FITS file
-# ----------------------------------------------------
+    star_info = STAR_CONFIG[star_name]
+    fits_path = Path(star_info["fits_path"])
 
-with fits.open(fits_path) as hdul:
+    print(f"Preprocessing star: {star_name}")
+    try:
+        # Load FITS
+        fits_data = load_fits(fits_path)
+        time = fits_data["time"]
+        flux = fits_data["flux"]
+        quality = fits_data["quality"]
 
-    data = hdul[1].data
+        # Clean and normalize
+        clean_time, clean_flux = clean_and_normalize(time, flux, quality)
+        raw_flux = clean_flux.copy()
 
-    time = data["TIME"]
-    flux = data["PDCSAP_FLUX"]
-    quality = data["QUALITY"]
+        # Detrend
+        flat_flux = detrend(clean_time, clean_flux, window_length=0.5, method="biweight")
 
-# ----------------------------------------------------
-# Keep only good observations
-# QUALITY == 0 means no known issues
-# ----------------------------------------------------
+        # Create comparison plots
+        plt.figure(figsize=(12, 8))
 
-mask = (
-    np.isfinite(time)
-    & np.isfinite(flux)
-    & (quality == 0)
-)
+        # Raw light curve
+        plt.subplot(2, 1, 1)
+        plt.plot(
+            clean_time,
+            raw_flux,
+            ".",
+            markersize=1,
+        )
+        plt.title("Raw Normalized TESS Light Curve")
+        plt.ylabel("Normalized Flux")
+        plt.grid(alpha=0.3)
 
-time = time[mask]
-flux = flux[mask]
+        # Detrended light curve
+        plt.subplot(2, 1, 2)
+        plt.plot(
+            clean_time,
+            flat_flux,
+            ".",
+            markersize=1,
+        )
+        plt.title("Detrended TESS Light Curve (Wotan)")
+        plt.xlabel("Time (Days)")
+        plt.ylabel("Normalized Flux")
+        plt.grid(alpha=0.3)
 
-# ----------------------------------------------------
-# Normalize the flux
-# ----------------------------------------------------
+        plt.tight_layout()
 
-flux = flux / np.median(flux)
+        # Save figure
+        Path("results").mkdir(exist_ok=True)
+        plt.savefig(
+            "results/preprocessed_lightcurve.png",
+            dpi=300
+        )
+        plt.show()
 
-# Save a copy before preprocessing
-raw_flux = flux.copy()
+        print("Preprocessed light curve saved to results/preprocessed_lightcurve.png")
 
-# ----------------------------------------------------
-# Detrend using Wotan
-# Removes long-term stellar variability
-# ----------------------------------------------------
+    except Exception as e:
+        print(f"Error processing star {star_name}: {e}")
 
-flat_flux = flatten(
-    time,
-    flux,
-    method="biweight",
-    window_length=0.5
-)
-
-# ----------------------------------------------------
-# Create comparison plots
-# ----------------------------------------------------
-
-plt.figure(figsize=(12, 8))
-
-# -----------------------
-# Raw light curve
-# -----------------------
-
-plt.subplot(2, 1, 1)
-
-plt.plot(
-    time,
-    raw_flux,
-    ".",
-    markersize=1,
-)
-
-plt.title("Raw Normalized TESS Light Curve")
-plt.ylabel("Normalized Flux")
-plt.grid(alpha=0.3)
-
-# -----------------------
-# Detrended light curve
-# -----------------------
-
-plt.subplot(2, 1, 2)
-
-plt.plot(
-    time,
-    flat_flux,
-    ".",
-    markersize=1,
-)
-
-plt.title("Detrended TESS Light Curve (Wotan)")
-plt.xlabel("Time (Days)")
-plt.ylabel("Normalized Flux")
-plt.grid(alpha=0.3)
-
-plt.tight_layout()
-
-# ----------------------------------------------------
-# Save figure
-# ----------------------------------------------------
-
-Path("results").mkdir(exist_ok=True)
-
-plt.savefig(
-    "results/preprocessed_lightcurve.png",
-    dpi=300
-)
-
-plt.show()
-
-print("Preprocessed light curve saved to results/preprocessed_lightcurve.png")
+if __name__ == "__main__":
+    main()

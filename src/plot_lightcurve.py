@@ -1,66 +1,65 @@
-from astropy.io import fits
-import matplotlib.pyplot as plt
-import numpy as np
+import argparse
 from pathlib import Path
+import matplotlib.pyplot as plt
+from config import STAR_CONFIG
+from pipeline import load_fits, clean_and_normalize
 
-# Path to the FITS file
-fits_path = Path(
-    "data/raw/sector_1/"
-    "tess2018206045859-s0001-0000000025155310-0120-s/"
-    "tess2018206045859-s0001-0000000025155310-0120-s_lc.fits"
-)
-# Open the FITS file
-with fits.open(fits_path) as hdul:
 
-    # The light curve is stored in HDU 1
-    data = hdul[1].data
+def main():
+    parser = argparse.ArgumentParser(description="Plot light curve for a star.")
+    parser.add_argument(
+        "--star", type=str, default="TIC_25155310",
+        help="Star key from STAR_CONFIG to process (default: TIC_25155310)"
+    )
+    args = parser.parse_args()
 
-    # Extract columns
-    time = data["TIME"]
-    flux = data["PDCSAP_FLUX"]
-    quality = data["QUALITY"]
+    star_name = args.star
+    if star_name not in STAR_CONFIG:
+        print(f"Error: Star '{star_name}' not found in STAR_CONFIG.")
+        return
 
-# ----------------------------------------------------
-# Keep only good-quality observations
-# QUALITY == 0 means no known issues
-# ----------------------------------------------------
+    star_info = STAR_CONFIG[star_name]
+    fits_path = Path(star_info["fits_path"])
 
-mask = (
-    np.isfinite(time)
-    & np.isfinite(flux)
-    & (quality == 0)
-)
+    print(f"Plotting light curve for star: {star_name}")
+    try:
+        # Load FITS
+        fits_data = load_fits(fits_path)
+        time = fits_data["time"]
+        flux = fits_data["flux"]
+        quality = fits_data["quality"]
 
-time = time[mask]
-flux = flux[mask]
+        # Clean and normalize
+        clean_time, clean_flux = clean_and_normalize(time, flux, quality)
 
-# Normalize the flux
-flux = flux / np.median(flux)
+        # ----------------------------------------------------
+        # Plot
+        # ----------------------------------------------------
+        plt.figure(figsize=(12, 5))
 
-# ----------------------------------------------------
-# Plot
-# ----------------------------------------------------
+        plt.plot(
+            clean_time,
+            clean_flux,
+            ".",
+            markersize=1,
+        )
 
-plt.figure(figsize=(12,5))
+        plt.xlabel("Time (Days)")
+        plt.ylabel("Normalized Flux")
+        plt.title("TESS Light Curve")
+        plt.grid(alpha=0.3)
 
-plt.plot(
-    time,
-    flux,
-    ".",
-    markersize=1,
-)
+        # Create results folder if needed
+        Path("results").mkdir(exist_ok=True)
 
-plt.xlabel("Time (Days)")
-plt.ylabel("Normalized Flux")
-plt.title("TESS Light Curve")
+        plt.savefig("results/lightcurve.png", dpi=300)
+        plt.show()
 
-plt.grid(alpha=0.3)
+        print("Light curve saved to results/lightcurve.png")
 
-# Create results folder if needed
-Path("results").mkdir(exist_ok=True)
+    except Exception as e:
+        print(f"Error processing star {star_name}: {e}")
 
-plt.savefig("results/lightcurve.png", dpi=300)
 
-plt.show()
-
-print("Light curve saved to results/lightcurve.png")
+if __name__ == "__main__":
+    main()

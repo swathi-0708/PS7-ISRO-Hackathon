@@ -1,98 +1,64 @@
+import argparse
 from pathlib import Path
-
-import numpy as np
-from astropy.io import fits
-from wotan import flatten
-from transitleastsquares import transitleastsquares
+from config import STAR_CONFIG
+from pipeline import load_fits, clean_and_normalize, detrend, run_tls
 
 
 def main():
-
-    # ----------------------------------------------------
-    # FITS file location
-    # ----------------------------------------------------
-
-    fits_path = Path(
-        "data/raw/sector_1/"
-        "tess2018206045859-s0001-0000000025155310-0120-s/"
-        "tess2018206045859-s0001-0000000025155310-0120-s_lc.fits"
+    parser = argparse.ArgumentParser(description="Detect transits for a star using TLS.")
+    parser.add_argument(
+        "--star", type=str, default="TIC_25155310",
+        help="Star key from STAR_CONFIG to process (default: TIC_25155310)"
     )
+    args = parser.parse_args()
 
-    print("Opening FITS file...")
+    star_name = args.star
+    if star_name not in STAR_CONFIG:
+        print(f"Error: Star '{star_name}' not found in STAR_CONFIG.")
+        return
 
-    # ----------------------------------------------------
-    # Read FITS
-    # ----------------------------------------------------
+    star_info = STAR_CONFIG[star_name]
+    fits_path = Path(star_info["fits_path"])
 
-    with fits.open(fits_path) as hdul:
+    print(f"Detecting transits for star: {star_name}")
+    try:
+        # Load FITS
+        print("Opening FITS file...")
+        fits_data = load_fits(fits_path)
+        time = fits_data["time"]
+        flux = fits_data["flux"]
+        quality = fits_data["quality"]
 
-        data = hdul[1].data
+        # Clean and normalize
+        clean_time, clean_flux = clean_and_normalize(time, flux, quality)
+        print(f"Using {len(clean_time)} good observations")
 
-        time = data["TIME"]
-        flux = data["PDCSAP_FLUX"]
-        quality = data["QUALITY"]
+        # Detrend
+        print("Detrending light curve...")
+        flat_flux = detrend(clean_time, clean_flux, window_length=0.5, method="biweight")
+        print("Detrending complete.")
 
-    # ----------------------------------------------------
-    # Remove bad observations
-    # ----------------------------------------------------
+        # Transit Least Squares
+        print("\nStarting Transit Least Squares search...\n")
+        results = run_tls(
+            clean_time,
+            flat_flux,
+            period_min=0.5,
+            period_max=15.0,
+            show_progress_bar=False
+        )
 
-    mask = (
-        np.isfinite(time)
-        & np.isfinite(flux)
-        & (quality == 0)
-    )
+        print("\n===================================")
+        print("Transit Least Squares Results")
+        print("===================================")
+        print(f"Best Period      : {results.period:.6f} days")
+        print(f"Transit Depth    : {results.depth:.8f}")
+        print(f"Transit Duration : {results.duration:.6f} days")
+        print(f"SDE              : {results.SDE:.2f}")
+        print("\nTLS completed successfully.")
 
-    time = time[mask]
-    flux = flux[mask]
-
-    print(f"Using {len(time)} good observations")
-
-    # ----------------------------------------------------
-    # Normalize
-    # ----------------------------------------------------
-
-    flux = flux / np.median(flux)
-
-    # ----------------------------------------------------
-    # Detrend using Wotan
-    # ----------------------------------------------------
-
-    print("Detrending light curve...")
-
-    flat_flux = flatten(
-        time,
-        flux,
-        method="biweight",
-        window_length=0.5,
-    )
-
-    # Normalize again after detrending
-    flat_flux = flat_flux / np.median(flat_flux)
-
-    print("Detrending complete.")
-
-    # ----------------------------------------------------
-    # Transit Least Squares
-    # ----------------------------------------------------
-
-    print("\nStarting Transit Least Squares search...\n")
-
-    model = transitleastsquares(time, flat_flux)
-
-    results = model.power(
-        show_progress_bar=True
-    )
-
-    print("\n===================================")
-    print("Transit Least Squares Results")
-    print("===================================")
-
-    print(f"Best Period      : {results.period:.6f} days")
-    print(f"Transit Depth    : {results.depth:.8f}")
-    print(f"Transit Duration : {results.duration:.6f} days")
-    print(f"SDE              : {results.SDE:.2f}")
-
-    print("\nTLS completed successfully.")
+    except Exception as e:
+        print(f"Error processing star {star_name}: {e}")
 
 
 if __name__ == "__main__":
